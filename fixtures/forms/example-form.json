@@ -1,0 +1,34 @@
+[
+    {
+        "title": "Example Form",
+        "description": "Stub fixture. Replace by exporting a real comprehensive form from Gravity Forms (Forms → Import/Export → Export Forms) and overwriting this file.",
+        "labelPlacement": "top_label",
+        "descriptionPlacement": "below",
+        "button": {
+            "type": "text",
+            "text": "Submit"
+        },
+        "fields": [
+            {
+                "id": 1,
+                "type": "text",
+                "label": "Name",
+                "isRequired": true
+            },
+            {
+                "id": 2,
+                "type": "email",
+                "label": "Email",
+                "isRequired": true
+            },
+            {
+                "id": 3,
+                "type": "textarea",
+                "label": "Message"
+            }
+        ],
+        "notifications": [],
+        "confirmations": [],
+        "version": "2.8"
+    }
+]

@@ -1,2 +1,122 @@
 # wp-fixtures
-Example content for WP sites
+
+Example content loader for new Threespot WordPress sites — pages, taxonomy terms, and Gravity Forms — exposed as WP-CLI commands. Dev-dependency only, intended for fresh local installs.
+
+## Install
+
+```bash
+composer require --dev threespot/wp-fixtures
+```
+
+Bedrock sites should add the package's GitHub repo to `repositories` in `composer.json` if it isn't already covered by an org-wide `vcs` entry:
+
+```json
+"repositories": [
+    { "type": "vcs", "url": "https://github.com/threespot/wp-fixtures" }
+]
+```
+
+The package self-registers its WP-CLI commands via Composer's `autoload.files` — no `mu-plugin` wiring or theme `functions.php` changes needed.
+
+## Commands
+
+```bash
+wp threespot fixtures load                # load all fixtures (idempotent)
+wp threespot fixtures load --pages        # only pages
+wp threespot fixtures load --taxonomies   # only taxonomy terms
+wp threespot fixtures load --forms        # only Gravity Forms
+wp threespot fixtures load --force        # re-import even if already present
+wp threespot fixtures load --path=…       # override fixtures directory
+
+wp threespot fixtures list                # show what fixtures are available
+wp threespot fixtures status              # show which fixtures are loaded on this site
+wp threespot fixtures export <post-id>    # render a page back to fixture HTML (stdout)
+```
+
+Order of operations when loading everything: taxonomy terms → Gravity Forms → pages. Page markup may reference imported terms and forms, so they go first.
+
+## File formats
+
+```
+fixtures/
+├── pages/         # *.html — Gutenberg block markup, optional YAML front-matter
+├── taxonomies/    # <taxonomy>.yaml — list of terms
+└── forms/         # *.json — Gravity Forms native export
+```
+
+### Pages
+
+Filename derives the title (`block-reference.html` → "Block Reference"). File body is exactly what Gutenberg produces. Optional front-matter overrides defaults:
+
+```html
+---
+slug: block-reference
+title: Block Reference
+template: default-template.php
+menu_order: 10
+status: publish
+post_type: page
+---
+<!-- wp:heading -->
+<h2 class="wp-block-heading">Heading</h2>
+<!-- /wp:heading -->
+```
+
+Defaults when front-matter is absent: title from filename (titlecased, dashes/underscores → spaces), `slug` from `sanitize_title(filename)`, `status: publish`, `post_type: page`, `menu_order: 0`, no template override.
+
+### Taxonomy terms
+
+Filename matches the taxonomy slug (`category.yaml` → `category`). The taxonomy must already be registered (typically via `extended-cpts` running at `init`) before fixtures load. Each entry:
+
+```yaml
+- name: News               # required
+  slug: news               # optional, derived from name via sanitize_title
+  description: …           # optional
+  parent: news             # optional, references another term's slug
+```
+
+Parents may appear after their children — the loader does a two-pass insert.
+
+### Gravity Forms
+
+Standard `wp gf form import` JSON exports. The loader shells out to that command, so the fixtures package doesn't parse or interpret form structure. Generate exports via Gravity Forms → Import/Export → Export Forms.
+
+## Idempotency
+
+Re-running `load` skips fixtures already imported. Markers used:
+
+| Fixture type   | Marker location | Marker key                       | Value                                  |
+|----------------|-----------------|----------------------------------|----------------------------------------|
+| Page           | `postmeta`      | `_threespot_fixture_source`      | e.g. `pages/block-reference.html`      |
+| Taxonomy term  | `termmeta`      | `_threespot_fixture_source`      | e.g. `taxonomies/category.yaml`        |
+| Gravity Form   | site `option`   | `_threespot_fixtures_loaded`     | array of imported source paths         |
+
+Markers track source path, so renaming a fixture file (or moving a post to a different slug) won't trigger re-import. Pass `--force` to re-import and update existing records.
+
+For Gravity Forms, `--force` runs the import again — GF assigns a new form ID rather than updating in place. If form IDs matter (the bundled form-examples page references form ID 1), delete duplicates before re-running.
+
+## Maintaining the shared fixtures
+
+Hand-writing Gutenberg markup is painful. Roundtrip through the editor instead:
+
+```bash
+# Build the page in WordPress's editor on a local site, then:
+wp threespot fixtures export 42 > fixtures/pages/new-page.html
+```
+
+`export` writes front-matter only for metadata that differs from loader defaults, so the output is minimal.
+
+## Pantheon push workflow
+
+Run `load` locally → confirm content looks right → use `terminus` to push the database to dev/staging/multidev. The package itself is a dev-dependency and is not deployed to Pantheon environments.
+
+## Caveats
+
+- **Gutenberg schemas evolve.** Older fixtures may render with deprecation warnings against newer WordPress versions. Keep fixtures simple, regenerate periodically by re-exporting.
+- **Custom block coupling.** Fixtures using blocks from `threespot/wp-blocks` pin to that package's block schemas; version-bump fixtures when block schemas change.
+- **Form ID assumption.** The bundled `form-examples` page references form ID 1, the ID Gravity Forms assigns on a fresh install. If you create forms manually before running fixtures, the assumption breaks — delete conflicting forms and re-run.
+- **Third-party placeholder images.** Fixture markup may include `<img>` tags pointing at services like placehold.co. Replace with real images via the normal WordPress media flow before client review.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

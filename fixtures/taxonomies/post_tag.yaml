@@ -1,0 +1,6 @@
+# Stub fixture. Replace with the canonical starter tag set.
+
+- name: Featured
+  slug: featured
+- name: Announcement
+  slug: announcement
