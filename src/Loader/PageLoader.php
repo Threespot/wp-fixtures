@@ -39,8 +39,8 @@ final class PageLoader
     {
         $result = new LoadResult();
         // glob() returns false if the directory is missing; we coerce to []
-        // so a site that only has taxonomy fixtures, etc., doesn't error out
-        // when `--pages` is implied by an unqualified `load`.
+        // so a site with no page fixtures doesn't error out when `--pages`
+        // is implied by an unqualified `load`.
         $files = glob($fixturesDir . '/pages/*.html') ?: [];
         // Deterministic processing order makes log output comparable across
         // runs and gives a predictable insert order in WordPress.

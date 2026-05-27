@@ -1,6 +1,6 @@
 # wp-fixtures
 
-Example content loader for new Threespot WordPress sites — pages, taxonomy terms, and Gravity Forms — exposed as WP-CLI commands. Dev-dependency only, intended for fresh local installs.
+Example content loader for new Threespot WordPress sites — pages and Gravity Forms — exposed as WP-CLI commands. Dev-dependency only, intended for fresh local installs.
 
 ## Install
 
@@ -23,7 +23,6 @@ The package self-registers its WP-CLI commands via Composer's `autoload.files` �
 ```bash
 wp threespot fixtures load                # load all fixtures (idempotent)
 wp threespot fixtures load --pages        # only pages
-wp threespot fixtures load --taxonomies   # only taxonomy terms
 wp threespot fixtures load --forms        # only Gravity Forms
 wp threespot fixtures load --force        # re-import even if already present
 wp threespot fixtures load --path=…       # override fixtures directory
@@ -33,14 +32,13 @@ wp threespot fixtures status              # show which fixtures are loaded on th
 wp threespot fixtures export <post-id>    # render a page back to fixture HTML (stdout)
 ```
 
-Order of operations when loading everything: taxonomy terms → Gravity Forms → pages. Page markup may reference imported terms and forms, so they go first.
+Order of operations when loading everything: Gravity Forms → pages. Page markup may reference imported forms, so they go first.
 
 ## File formats
 
 ```
 fixtures/
 ├── pages/         # *.html — Gutenberg block markup, optional YAML front-matter
-├── taxonomies/    # <taxonomy>.yaml — list of terms
 └── forms/         # *.json — Gravity Forms native export
 ```
 
@@ -64,19 +62,6 @@ post_type: page
 
 Defaults when front-matter is absent: title from filename (titlecased, dashes/underscores → spaces), `slug` from `sanitize_title(filename)`, `status: publish`, `post_type: page`, `menu_order: 0`, no template override.
 
-### Taxonomy terms
-
-Filename matches the taxonomy slug (`category.yaml` → `category`). The taxonomy must already be registered (typically via `extended-cpts` running at `init`) before fixtures load. Each entry:
-
-```yaml
-- name: News               # required
-  slug: news               # optional, derived from name via sanitize_title
-  description: …           # optional
-  parent: news             # optional, references another term's slug
-```
-
-Parents may appear after their children — the loader does a two-pass insert.
-
 ### Gravity Forms
 
 Standard `wp gf form import` JSON exports. The loader shells out to that command, so the fixtures package doesn't parse or interpret form structure. Generate exports via Gravity Forms → Import/Export → Export Forms.
@@ -88,7 +73,6 @@ Re-running `load` skips fixtures already imported. Markers used:
 | Fixture type   | Marker location | Marker key                       | Value                                  |
 |----------------|-----------------|----------------------------------|----------------------------------------|
 | Page           | `postmeta`      | `_threespot_fixture_source`      | e.g. `pages/block-reference.html`      |
-| Taxonomy term  | `termmeta`      | `_threespot_fixture_source`      | e.g. `taxonomies/category.yaml`        |
 | Gravity Form   | site `option`   | `_threespot_fixtures_loaded`     | array of imported source paths         |
 
 Markers track source path, so renaming a fixture file (or moving a post to a different slug) won't trigger re-import. Pass `--force` to re-import and update existing records.

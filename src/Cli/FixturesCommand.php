@@ -8,7 +8,6 @@ use Threespot\WpFixtures\Exporter\PageExporter;
 use Threespot\WpFixtures\Loader\FormLoader;
 use Threespot\WpFixtures\Loader\LoadResult;
 use Threespot\WpFixtures\Loader\PageLoader;
-use Threespot\WpFixtures\Loader\TaxonomyLoader;
 use Threespot\WpFixtures\Paths;
 
 /**
@@ -27,17 +26,14 @@ final class FixturesCommand
     /**
      * Loads fixtures into the current site.
      *
-     * Order: taxonomy terms → Gravity Forms → pages, so page markup can
-     * reference already-imported terms and forms. Re-running is safe;
-     * fixtures already imported are skipped unless --force is passed.
+     * Order: Gravity Forms → pages, so page markup can reference
+     * already-imported forms. Re-running is safe; fixtures already imported
+     * are skipped unless --force is passed.
      *
      * ## OPTIONS
      *
      * [--pages]
      * : Only load page fixtures.
-     *
-     * [--taxonomies]
-     * : Only load taxonomy term fixtures.
      *
      * [--forms]
      * : Only load Gravity Forms fixtures.
@@ -73,24 +69,16 @@ final class FixturesCommand
         // Decide which sections to run. If none of the type flags is passed,
         // run everything (the typical first-run case).
         $selected = array_filter([
-            'taxonomies' => isset($assoc_args['taxonomies']),
             'forms'      => isset($assoc_args['forms']),
             'pages'      => isset($assoc_args['pages']),
         ]);
         $runAll = empty($selected);
 
-        // Accumulates results across the three sections for the final summary line.
+        // Accumulates results across the sections for the final summary line.
         $totals = new LoadResult();
 
-        // Order matters: pages may reference imported terms (by slug) and
-        // forms (by ID), so we load those first.
-        if ($runAll || isset($selected['taxonomies'])) {
-            \WP_CLI::log('Loading taxonomy terms...');
-            $r = (new TaxonomyLoader())->load($path, $force);
-            $this->reportSection($r);
-            $totals->merge($r);
-        }
-
+        // Order matters: pages may reference imported forms (by ID), so we
+        // load forms first.
         if ($runAll || isset($selected['forms'])) {
             \WP_CLI::log('Loading Gravity Forms...');
             $r = (new FormLoader())->load($path, $force);
@@ -159,14 +147,6 @@ final class FixturesCommand
             $rows[] = ['type' => 'page', 'path' => 'pages/' . basename($file)];
         }
 
-        $taxFiles = array_merge(
-            glob($path . '/taxonomies/*.yaml') ?: [],
-            glob($path . '/taxonomies/*.yml') ?: [],
-        );
-        foreach ($taxFiles as $file) {
-            $rows[] = ['type' => 'taxonomy', 'path' => 'taxonomies/' . basename($file)];
-        }
-
         foreach (glob($path . '/forms/*.json') ?: [] as $file) {
             $rows[] = ['type' => 'form', 'path' => 'forms/' . basename($file)];
         }
@@ -186,8 +166,8 @@ final class FixturesCommand
     /**
      * Shows which fixtures have been loaded on this site.
      *
-     * Queries the markers directly: postmeta for pages, termmeta for terms,
-     * a site option for forms.
+     * Queries the markers directly: postmeta for pages, a site option for
+     * forms.
      *
      * ## OPTIONS
      *
@@ -210,9 +190,9 @@ final class FixturesCommand
     public function status(array $args, array $assoc_args): void
     {
         // $wpdb is WordPress's database abstraction (singleton). We use it
-        // directly here because there's no get_posts/get_terms helper that
-        // returns "all rows with this meta key" without a wasteful join to
-        // the parent posts/terms table.
+        // directly here because there's no get_posts helper that returns
+        // "all rows with this meta key" without a wasteful join to the
+        // parent posts table.
         global $wpdb;
 
         $rows = [];
@@ -232,22 +212,6 @@ final class FixturesCommand
                 'type' => 'page',
                 'source' => (string) $row['meta_value'],
                 'ref' => 'post ' . $row['post_id'],
-            ];
-        }
-
-        // Taxonomy terms: termmeta marker (same key string, different table).
-        $termRows = $wpdb->get_results(
-            $wpdb->prepare(
-                "SELECT term_id, meta_value FROM $wpdb->termmeta WHERE meta_key = %s",
-                TaxonomyLoader::FIXTURE_META_KEY,
-            ),
-            ARRAY_A,
-        ) ?: [];
-        foreach ($termRows as $row) {
-            $rows[] = [
-                'type' => 'taxonomy-term',
-                'source' => (string) $row['meta_value'],
-                'ref' => 'term ' . $row['term_id'],
             ];
         }
 
@@ -317,7 +281,7 @@ final class FixturesCommand
     /**
      * Prints a one-line summary for a section and lists any per-item errors.
      *
-     * Called once per section (taxonomies / forms / pages) from load().
+     * Called once per section (forms / pages) from load().
      */
     private function reportSection(LoadResult $r): void
     {
@@ -329,10 +293,8 @@ final class FixturesCommand
         ));
 
         foreach ($r->errors as $err) {
-            // Pick whichever context key the failing loader populated.
-            // PageLoader uses 'path', TaxonomyLoader uses 'file' or 'slug',
-            // FormLoader uses 'path'.
-            $ctx = $err['path'] ?? $err['file'] ?? $err['slug'] ?? '';
+            // PageLoader and FormLoader both populate 'path' on errors.
+            $ctx = $err['path'] ?? '';
             $ctxStr = $ctx !== '' ? "[$ctx] " : '';
             \WP_CLI::log('    ' . $ctxStr . $err['error']);
         }
