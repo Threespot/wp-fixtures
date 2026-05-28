@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Threespot\WpFixtures\Exporter;
 
+use Threespot\WpFixtures\Loader\PageLoader;
 use Threespot\WpFixtures\Parser\FrontMatter;
 
 /**
@@ -56,6 +57,15 @@ final class PageExporter
 
         if ((int) $post->menu_order !== 0) {
             $frontMatter['menu_order'] = (int) $post->menu_order;
+        }
+
+        // The loader defaults to the "admin" account, so only emit `author:`
+        // when this page is owned by someone else. We write the user_login
+        // (not the ID) because IDs aren't portable across sites — matching how
+        // PageLoader::resolveAuthorId() consumes the field.
+        $author = get_user_by('id', (int) $post->post_author);
+        if ($author && $author->user_login !== PageLoader::DEFAULT_AUTHOR_LOGIN) {
+            $frontMatter['author'] = $author->user_login;
         }
 
         // _wp_page_template == 'default' is WordPress's way of saying "no

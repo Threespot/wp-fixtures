@@ -54,13 +54,16 @@ template: default-template.php
 menu_order: 10
 status: publish
 post_type: page
+author: admin
 ---
 <!-- wp:heading -->
 <h2 class="wp-block-heading">Heading</h2>
 <!-- /wp:heading -->
 ```
 
-Defaults when front-matter is absent: title from filename (titlecased, dashes/underscores → spaces), `slug` from `sanitize_title(filename)`, `status: publish`, `post_type: page`, `menu_order: 0`, no template override.
+Defaults when front-matter is absent: title from filename (titlecased, dashes/underscores → spaces), `slug` from `sanitize_title(filename)`, `status: publish`, `post_type: page`, `menu_order: 0`, `author: admin`, no template override.
+
+`author` accepts a user_login or a numeric user ID. It defaults to the `admin` account; if no `admin` user exists (e.g. it was renamed), the loader falls back to the lowest-ID administrator. The author is resolved to an ID at import time — user IDs aren't portable across sites, so fixtures store the login, not the ID.
 
 ### Gravity Forms
 

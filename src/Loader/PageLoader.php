@@ -30,6 +30,13 @@ final class PageLoader
     public const FIXTURE_META_KEY = '_threespot_fixture_source';
 
     /**
+     * user_login of the account fixtures are attributed to when front-matter
+     * doesn't specify an `author`. PageExporter omits the `author:` line for
+     * pages owned by this account, so loader and exporter stay symmetric.
+     */
+    public const DEFAULT_AUTHOR_LOGIN = 'admin';
+
+    /**
      * Imports every page fixture under $fixturesDir/pages/.
      *
      * @param string $fixturesDir Absolute path to the fixtures root.
@@ -124,6 +131,7 @@ final class PageLoader
             'post_name'    => (string) ($frontMatter['slug'] ?? sanitize_title($filenameBase)),
             'post_status'  => (string) ($frontMatter['status'] ?? 'publish'),
             'post_type'    => (string) ($frontMatter['post_type'] ?? 'page'),
+            'post_author'  => $this->resolveAuthorId($frontMatter['author'] ?? null),
             'menu_order'   => (int) ($frontMatter['menu_order'] ?? 0),
             'post_content' => $body,
         ];
@@ -160,6 +168,53 @@ final class PageLoader
         update_post_meta($postId, self::FIXTURE_META_KEY, $relPath);
 
         return $postId;
+    }
+
+    /**
+     * Resolves the post_author ID for a fixture.
+     *
+     * Resolution order:
+     *   1. Front-matter `author` override — a numeric user ID, or a user_login
+     *      to look up. An unmatched login falls through to the default.
+     *   2. The conventional {@see DEFAULT_AUTHOR_LOGIN} ("admin") account.
+     *   3. The lowest-ID administrator, for sites where the admin account was
+     *      renamed.
+     *   4. 0 as a last resort, which lets WordPress assign its own default
+     *      rather than erroring the import.
+     *
+     * We resolve to an ID at import time rather than storing one in fixtures
+     * because user IDs aren't portable across sites; the marker we rely on is
+     * the login, not the ID.
+     *
+     * @param int|string|null $author Front-matter override, or null for default.
+     */
+    private function resolveAuthorId(int|string|null $author): int
+    {
+        if ($author !== null && $author !== '') {
+            if (is_numeric($author)) {
+                return (int) $author;
+            }
+
+            $user = get_user_by('login', (string) $author);
+            if ($user) {
+                return (int) $user->ID;
+            }
+        }
+
+        $default = get_user_by('login', self::DEFAULT_AUTHOR_LOGIN);
+        if ($default) {
+            return (int) $default->ID;
+        }
+
+        $admins = get_users([
+            'role'    => 'administrator',
+            'orderby' => 'ID',
+            'order'   => 'ASC',
+            'number'  => 1,
+            'fields'  => 'ID',
+        ]);
+
+        return $admins ? (int) $admins[0] : 0;
     }
 
     /**
