@@ -55,6 +55,17 @@ final class PageExporter
             $frontMatter['post_type'] = $post->post_type;
         }
 
+        // The loader defaults to post_parent 0 (top-level), so only emit
+        // `parent:` for a child page. We write the parent's slug, not its ID,
+        // because IDs aren't portable — matching how PageLoader resolves the
+        // field back via resolveParentBySlug().
+        if ((int) $post->post_parent !== 0) {
+            $parent = get_post((int) $post->post_parent);
+            if ($parent) {
+                $frontMatter['parent'] = $parent->post_name;
+            }
+        }
+
         if ((int) $post->menu_order !== 0) {
             $frontMatter['menu_order'] = (int) $post->menu_order;
         }

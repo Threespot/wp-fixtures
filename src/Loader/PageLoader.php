@@ -53,6 +53,11 @@ final class PageLoader
         // runs and gives a predictable insert order in WordPress.
         sort($files);
 
+        // Parent wiring is deferred to a second pass: a child fixture can be
+        // processed before its parent because files load in filename-sorted
+        // order. Each entry is ['post_id' => int, 'parent' => string, 'path' => string].
+        $pendingParents = [];
+
         foreach ($files as $file) {
             $relPath = 'pages/' . basename($file);
             $existingId = $this->findByMarker($relPath);
@@ -63,14 +68,21 @@ final class PageLoader
             }
 
             try {
-                $postId = $this->import($file, $relPath, $existingId);
+                [$postId, $parentSlug] = $this->import($file, $relPath, $existingId);
                 $result->created[] = ['path' => $relPath, 'post_id' => $postId];
+                if ($parentSlug !== null) {
+                    $pendingParents[] = ['post_id' => $postId, 'parent' => $parentSlug, 'path' => $relPath];
+                }
             } catch (\Throwable $e) {
                 // Per-file failure — record and keep going so one bad fixture
                 // doesn't abort the whole import.
                 $result->errors[] = ['path' => $relPath, 'error' => $e->getMessage()];
             }
         }
+
+        // Now that every fixture page exists in the DB, resolve `parent:`
+        // slugs to IDs and set post_parent.
+        $this->resolveParents($pendingParents, $result);
 
         return $result;
     }
@@ -107,13 +119,18 @@ final class PageLoader
     /**
      * Performs the actual insert or update for a single fixture file.
      *
+     * Note: post_parent is intentionally NOT set here. Parent wiring happens
+     * in a second pass ({@see resolveParents}) so a child can be imported
+     * before its parent exists; this method just hands the requested parent
+     * slug back to the caller.
+     *
      * @param string   $file       Absolute path to the HTML fixture.
      * @param string   $relPath    Source-path string to store as the marker.
      * @param int|null $existingId Post ID to update, or null to insert new.
-     * @return int The post ID that was inserted or updated.
+     * @return array{0: int, 1: ?string} [post ID, requested parent slug or null].
      * @throws \RuntimeException When the file can't be read or wp_insert/update fails.
      */
-    private function import(string $file, string $relPath, ?int $existingId): int
+    private function import(string $file, string $relPath, ?int $existingId): array
     {
         $contents = file_get_contents($file);
         if ($contents === false) {
@@ -167,7 +184,156 @@ final class PageLoader
         // value stays accurate even if the source path was renamed.
         update_post_meta($postId, self::FIXTURE_META_KEY, $relPath);
 
-        return $postId;
+        // If the page embeds a core Page List block, scope it to this page's
+        // own children by writing the now-known post ID into the block's
+        // parentPageID attribute. We can't do this in the insert above because
+        // the ID doesn't exist until WordPress assigns it, so it's a follow-up
+        // content update — only triggered for pages that actually use the block.
+        if (str_contains($body, 'wp:page-list')) {
+            $this->scopePageList($postId, $body);
+        }
+
+        // A blank or absent `parent:` means "top-level page" (post_parent 0),
+        // which is the default — so we only propagate a non-empty slug.
+        $parent = $frontMatter['parent'] ?? null;
+        $parentSlug = ($parent !== null && $parent !== '') ? (string) $parent : null;
+
+        return [$postId, $parentSlug];
+    }
+
+    /**
+     * Writes $parentId into the parentPageID attribute of every core Page List
+     * block in $body, then persists the rewritten content for $postId.
+     *
+     * Scoping a Page List block to a parent page makes it render only that
+     * page's children. Passing the page's own ID therefore turns a bare
+     * `<!-- wp:page-list /-->` into an index of its child pages — generated
+     * live by WordPress at render time, so it always reflects the current
+     * post_parent tree (no baked-in slugs or URLs to go stale).
+     *
+     * @param int    $postId The page being scoped (also the parent whose children to list).
+     * @param string $body   The page's block markup, as read from the fixture.
+     * @throws \RuntimeException When the follow-up content update fails.
+     */
+    private function scopePageList(int $postId, string $body): void
+    {
+        // Match a Page List block delimiter, with or without existing
+        // attributes and in self-closing (`/-->`) or paired (`-->`) form.
+        // Non-greedy `\{.*?\}` captures only this block's attribute JSON.
+        $pattern = '/<!--\s+wp:page-list(?:\s+(\{.*?\}))?\s*(\/)?-->/';
+
+        $scoped = preg_replace_callback($pattern, static function (array $m) use ($postId): string {
+            // Merge into any existing attributes rather than clobbering them,
+            // so a hand-authored block keeping other settings is respected.
+            $attrs = [];
+            if (!empty($m[1])) {
+                $decoded = json_decode($m[1], true);
+                if (is_array($decoded)) {
+                    $attrs = $decoded;
+                }
+            }
+            $attrs['parentPageID'] = $postId;
+
+            // wp_json_encode matches WordPress's own block serialization for a
+            // simple integer attribute, e.g. {"parentPageID":42}.
+            $json    = wp_json_encode($attrs);
+            $selfEnd = ($m[2] ?? '') === '/' ? ' /-->' : ' -->';
+
+            return '<!-- wp:page-list ' . $json . $selfEnd;
+        }, $body);
+
+        // preg_replace_callback returns null only on a regex engine error;
+        // bail to the original body so a hiccup never blanks the content.
+        if ($scoped === null || $scoped === $body) {
+            return;
+        }
+
+        // wp_slash for the same reason as the insert above — WordPress
+        // unslashes post_content on save.
+        $updated = wp_update_post(wp_slash([
+            'ID'           => $postId,
+            'post_content' => $scoped,
+        ]), true);
+
+        if (is_wp_error($updated)) {
+            throw new \RuntimeException($updated->get_error_message());
+        }
+    }
+
+    /**
+     * Second-pass parent wiring: resolves each deferred `parent:` slug to a
+     * post ID and sets post_parent.
+     *
+     * Run after every fixture page has been inserted, so a parent referenced
+     * by a child is guaranteed to exist regardless of filename order. Failures
+     * (unknown slug, self-reference, update error) are recorded on $result and
+     * don't abort the rest — consistent with the per-file tolerance in load().
+     *
+     * @param array<int, array{post_id: int, parent: string, path: string}> $pending
+     */
+    private function resolveParents(array $pending, LoadResult $result): void
+    {
+        foreach ($pending as $entry) {
+            $parentId = $this->resolveParentBySlug($entry['parent']);
+
+            if ($parentId === null) {
+                $result->errors[] = [
+                    'path'  => $entry['path'],
+                    'error' => "parent page '{$entry['parent']}' not found",
+                ];
+                continue;
+            }
+
+            // Guard against a fixture naming itself as its own parent, which
+            // WordPress would otherwise accept and produce a page that can't
+            // render in the admin tree.
+            if ($parentId === $entry['post_id']) {
+                $result->errors[] = [
+                    'path'  => $entry['path'],
+                    'error' => "page lists itself as parent ('{$entry['parent']}')",
+                ];
+                continue;
+            }
+
+            $updated = wp_update_post([
+                'ID'          => $entry['post_id'],
+                'post_parent' => $parentId,
+            ], true);
+
+            if (is_wp_error($updated)) {
+                $result->errors[] = [
+                    'path'  => $entry['path'],
+                    'error' => $updated->get_error_message(),
+                ];
+            }
+        }
+    }
+
+    /**
+     * Looks up a page ID by its slug (post_name).
+     *
+     * Used to turn a fixture's `parent:` slug into a post_parent ID. We match
+     * on slug rather than storing an ID because post IDs aren't portable across
+     * sites — the same reasoning that drives author resolution by login.
+     *
+     * @param string $slug The parent page's slug (post_name).
+     * @return int|null Matching post ID, or null when no page has that slug.
+     */
+    private function resolveParentBySlug(string $slug): ?int
+    {
+        $posts = get_posts([
+            'post_type'   => 'any',
+            'post_status' => 'any',
+            'numberposts' => 1,
+            'fields'      => 'ids',
+            // 'name' queries against post_name (the slug), not the title.
+            'name'        => $slug,
+            // Match findByMarker(): re-enable filters get_posts() suppresses by
+            // default so language scoping etc. behaves on multilingual sites.
+            'suppress_filters' => false,
+        ]);
+
+        return $posts ? (int) $posts[0] : null;
     }
 
     /**
