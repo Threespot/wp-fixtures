@@ -18,6 +18,8 @@ Bedrock sites should add the package's GitHub repo to `repositories` in `compose
 
 The package self-registers its WP-CLI commands via Composer's `autoload.files` — no `mu-plugin` wiring or theme `functions.php` changes needed.
 
+**Prerequisite for form fixtures:** loading Gravity Forms requires both Gravity Forms and the **Gravity Forms CLI Add-On** (`gravityformscli`) to be active — see [Gravity Forms](#gravity-forms) below. Page fixtures have no such dependency.
+
 ## Commands
 
 ```bash
@@ -85,6 +87,8 @@ On import the loader writes the page's own ID into the block's `parentPageID` at
 ### Gravity Forms
 
 Standard `wp gf form import` JSON exports. The loader shells out to that command, so the fixtures package doesn't parse or interpret form structure. Generate exports via Gravity Forms → Import/Export → Export Forms.
+
+> **Requires the Gravity Forms CLI Add-On.** The `wp gf …` command namespace is *not* part of Gravity Forms core — it's provided by the separate **Gravity Forms CLI Add-On** (`gravityformscli`). Without it you'll see `'gf' is not a registered wp command` when loading forms. Install and activate it from the WordPress admin (Forms → System Status / Add-Ons), then confirm with `wp cli has-command gf`.
 
 ## Idempotency
 
