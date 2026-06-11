@@ -50,8 +50,10 @@ final class PageLoader
         // is implied by an unqualified `load`.
         $files = glob($fixturesDir . '/pages/*.html') ?: [];
         // Deterministic processing order makes log output comparable across
-        // runs and gives a predictable insert order in WordPress.
-        sort($files);
+        // runs and gives a predictable insert order in WordPress. Reverse
+        // alphabetical, so that admin views which fall back to date/ID
+        // descending (all fixtures share an import timestamp) read A->Z.
+        rsort($files);
 
         // Parent wiring is deferred to a second pass: a child fixture can be
         // processed before its parent because files load in filename-sorted
